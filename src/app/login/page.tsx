@@ -17,13 +17,20 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Autocompleta la clínica: en producción desde el subdominio
-  // (sonrisas.tudominio.com → "sonrisas"); en localhost recuerda la última usada
+  // Autocompleta la clínica SOLO cuando hay un dominio propio real
+  // (sonrisas.tudominio.com → "sonrisas"). Dominios de plataforma (Vercel,
+  // localhost, IPs) NO tienen subdominio de clínica — ahí se recuerda la
+  // última usada manualmente. Sin esto, "proyecto-hash.vercel.app" se leía
+  // como si "proyecto-hash" fuera el nombre de la clínica.
   const [tenantFromUrl, setTenantFromUrl] = useState(false);
   useEffect(() => {
     const host = window.location.hostname;
+    const isPlatformDomain =
+      host.endsWith('.vercel.app') ||
+      host === 'localhost' ||
+      /^(\d{1,3}\.){3}\d{1,3}$/.test(host); // IP directa (ej. preview local)
     const parts = host.split('.');
-    if (parts.length >= 3 && parts[0] !== 'www') {
+    if (!isPlatformDomain && parts.length >= 3 && parts[0] !== 'www') {
       setTenant(parts[0]);
       setTenantFromUrl(true);
     } else {
