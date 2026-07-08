@@ -12,7 +12,9 @@ interface Tenant {
 }
 interface Provisioned {
   tenant: Tenant;
-  loginUrl: string;
+  /** null mientras no haya un dominio propio configurado (BASE_DOMAIN) */
+  loginUrl: string | null;
+  loginInstructions?: string;
   temporaryPassword?: string;
   admin: { email: string };
 }
@@ -55,7 +57,7 @@ export default function PlataformaPage() {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-left text-slate-500">
             <tr>
-              <th className="px-4 py-3">Clínica</th><th className="px-4 py-3">Dominio de acceso</th>
+              <th className="px-4 py-3">Clínica</th><th className="px-4 py-3">Nombre de acceso (campo &quot;Clínica&quot;)</th>
               <th className="px-4 py-3">Contacto</th><th className="px-4 py-3">Alta</th>
               <th className="px-4 py-3">Estado</th><th className="px-4 py-3" />
             </tr>
@@ -66,7 +68,7 @@ export default function PlataformaPage() {
             ) : tenants.map((t) => (
               <tr key={t._id} className="border-t border-slate-100">
                 <td className="px-4 py-2 font-semibold">{t.name}</td>
-                <td className="px-4 py-2 font-mono text-sky-700">{t.subdomain}.tuapp.com</td>
+                <td className="px-4 py-2 font-mono text-sky-700">{t.subdomain}</td>
                 <td className="px-4 py-2">{t.contactEmail ?? '—'}</td>
                 <td className="px-4 py-2">{fmtDate(t.createdAt)}</td>
                 <td className="px-4 py-2">
@@ -129,7 +131,13 @@ function NuevaClinicaForm({ onCreated }: { onCreated: () => Promise<void> }) {
       {result && (
         <div className="mt-3 rounded-lg border-2 border-emerald-400 bg-emerald-50 p-4 text-sm">
           <p className="font-bold text-emerald-800">✔ Clínica creada — entregar estos datos al cliente:</p>
-          <p className="mt-1">Acceso: <b className="font-mono">{result.loginUrl}</b></p>
+          {result.loginUrl ? (
+            <p className="mt-1">Acceso: <b className="font-mono">{result.loginUrl}</b></p>
+          ) : (
+            <p className="mt-1 text-amber-700">
+              ⚠ Aún no hay dominio propio configurado — {result.loginInstructions}
+            </p>
+          )}
           <p>Usuario: <b>{result.admin.email}</b></p>
           {result.temporaryPassword && (
             <p>Contraseña temporal: <b className="font-mono text-lg">{result.temporaryPassword}</b>{' '}
