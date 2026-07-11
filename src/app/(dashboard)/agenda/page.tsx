@@ -640,7 +640,7 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onSaved, 
   });
   const [specialties, setSpecialties] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<{ warning: boolean; waUrl: string | null } | null>(null);
+  const [created, setCreated] = useState<{ warning: boolean; waUrl: string | null; waitlistLinkFailed?: boolean } | null>(null);
 
   useEffect(() => {
     setF((prev) => ({ ...prev, date: prefill.date, start: prefill.start, end: prefill.end }));
@@ -665,11 +665,18 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onSaved, 
           requiredSpecialty: f.requiredSpecialty || undefined,
         },
       });
+      // No dejar el error de este paso silencioso (revisión skill fixer): si falla,
+      // se avisa en el panel de éxito para que recepción actualice la lista a mano.
+      let waitlistLinkFailed = false;
       if (waitlistEntryId) {
-        await api(`/waitlist/${waitlistEntryId}/status`, {
-          method: 'PATCH',
-          body: { status: 'scheduled', appointmentId: res.appointment._id },
-        }).catch(() => null);
+        try {
+          await api(`/waitlist/${waitlistEntryId}/status`, {
+            method: 'PATCH',
+            body: { status: 'scheduled', appointmentId: res.appointment._id },
+          });
+        } catch {
+          waitlistLinkFailed = true;
+        }
       }
       // Requerimiento Fabián: enviar mensaje al paciente al agendar (wa.me)
       const tpl = templates.find((t) => t.key === 'cita_confirmacion');
@@ -681,7 +688,7 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onSaved, 
         doctor: withDrPrefix(doctors.find((d) => d._id === f.professionalId)?.fullName ?? ''),
         motivo: f.reason ? ` Motivo: ${f.reason}.` : '',
       });
-      setCreated({ warning: res.specialtyWarning, waUrl: waLink(patient.phone, msg) });
+      setCreated({ warning: res.specialtyWarning, waUrl: waLink(patient.phone, msg), waitlistLinkFailed });
       onSaved(); // el calendario queda al día YA, sin depender del botón "Listo"
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Error');
@@ -695,6 +702,11 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onSaved, 
         {created.warning && (
           <p className="mt-1 text-sm font-semibold text-amber-700">
             ⚠ El doctor NO tiene la especialidad requerida — revisar asignación.
+          </p>
+        )}
+        {created.waitlistLinkFailed && (
+          <p className="mt-1 text-sm font-semibold text-amber-700">
+            ⚠ No se pudo actualizar el registro en la lista de espera — márcalo &quot;Agendado&quot; ahí manualmente.
           </p>
         )}
         <div className="mt-3 flex gap-2 text-sm">
@@ -799,6 +811,15 @@ function WaitlistPanel({ doctors, suggestion, onSchedule, onClose }: {
   }, [statusFilter]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Bug encontrado por revisión (skill fixer): si el panel ya estaba abierto en
+  // otra pestaña (ej. "Agendado") cuando se cancela una cita, el aviso 🔔 aparecía
+  // pero los pacientes resaltados quedaban invisibles porque la lista seguía
+  // filtrada por el estado anterior. Al llegar una sugerencia nueva, forzar la
+  // pestaña "Esperando" para que los matches sean visibles de inmediato.
+  useEffect(() => {
+    if (suggestion && suggestion.matches.length > 0) setStatusFilter('waiting');
+  }, [suggestion]);
 
   async function setStatus(id: string, status: WaitlistStatus) {
     setError(null);
