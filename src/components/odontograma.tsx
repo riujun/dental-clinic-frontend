@@ -1,12 +1,18 @@
 // DONE: Ideas de mejora #1 - Odontograma FDI interactivo (docs/ideas-mejoras.md)
+// DONE: Idea #7 - estado inicial del odontograma (editable por el doctor)
 // Mapa visual de los 32 dientes (notación FDI adulto). Colores:
 //   petróleo = con tratamientos REALIZADOS · ámbar = con PLANIFICADOS ·
 //   mitad/mitad = ambos · blanco = sin registros. Click → historial del diente.
+// Insignia violeta en la esquina = estado inicial (caries/ausente/corona previa/etc,
+// idea #7) — independiente de los tratamientos, se edita con el modo "✏️ Editar estado".
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api } from '@/lib/api';
-import { fmtDate, fmtMoney } from '@/lib/types';
+import { api, ApiError } from '@/lib/api';
+import {
+  fmtDate, fmtMoney, PatientProfile, ToothCondition, ToothConditionValue,
+  TOOTH_CONDITIONS, TOOTH_CONDITION_LABELS, TOOTH_CONDITION_SHORT,
+} from '@/lib/types';
 
 // Cuadrantes FDI como los lee un dentista (derecha del paciente a la izquierda)
 const UPPER = ['18', '17', '16', '15', '14', '13', '12', '11', '21', '22', '23', '24', '25', '26', '27', '28'];
@@ -34,9 +40,24 @@ const ACTIVE_PLAN_STATES = ['DRAFT', 'PRESENTED', 'ACCEPTED', 'IN_PROGRESS'];
 
 export function Odontograma({ patientId }: { patientId: string }) {
   const [byTooth, setByTooth] = useState<Record<string, ToothRecord[]> | null>(null);
+  const [conditions, setConditions] = useState<Record<string, ToothCondition>>({});
   const [selected, setSelected] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [conditionDraft, setConditionDraft] = useState<ToothConditionValue | ''>('');
+  const [notesDraft, setNotesDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadConditions = () => {
+    api<PatientProfile>(`/patients/${patientId}`).then((p) => {
+      const map: Record<string, ToothCondition> = {};
+      for (const c of p.patient.toothConditions ?? []) map[c.toothFdi] = c;
+      setConditions(map);
+    }).catch(() => setConditions({}));
+  };
 
   useEffect(() => {
+    loadConditions();
     void (async () => {
       const [procs, plans] = await Promise.all([
         api<ProcedureApi[]>(`/procedures?patientId=${patientId}`).catch(() => []),
@@ -94,20 +115,58 @@ export function Odontograma({ patientId }: { patientId: string }) {
     return `bg-white text-slate-500 hover:bg-slate-100${sel}`;
   };
 
+  function handleToothClick(t: string) {
+    setError(null);
+    if (editMode) {
+      setSelected(t);
+      setConditionDraft(conditions[t]?.condition ?? '');
+      setNotesDraft(conditions[t]?.notes ?? '');
+      return;
+    }
+    setSelected(selected === t ? null : t);
+  }
+
+  async function saveCondition() {
+    if (!selected) return;
+    setSaving(true);
+    setError(null);
+    try {
+      if (conditionDraft === '') {
+        await api(`/patients/${patientId}/tooth-conditions/${selected}`, { method: 'DELETE' });
+      } else {
+        await api(`/patients/${patientId}/tooth-conditions/${selected}`, {
+          method: 'PATCH',
+          body: { condition: conditionDraft, notes: notesDraft || undefined },
+        });
+      }
+      loadConditions();
+      setSelected(null);
+    } catch (err) { setError(err instanceof ApiError ? err.message : 'Error'); }
+    finally { setSaving(false); }
+  }
+
   const Row = ({ teeth }: { teeth: string[] }) => (
     <div className="flex justify-center gap-1">
-      {teeth.map((t, i) => (
-        <span key={t} className="flex items-center">
-          {i === 8 && <span className="mx-1 w-px self-stretch bg-slate-300" />}
-          <button
-            onClick={() => setSelected(selected === t ? null : t)}
-            title={`Diente ${t}: ${(byTooth[t] ?? []).length} registro(s)`}
-            className={`h-9 w-8 rounded-lg border border-slate-300 text-xs font-bold shadow-sm transition ${toothClass(t)}`}
-          >
-            {t}
-          </button>
-        </span>
-      ))}
+      {teeth.map((t, i) => {
+        const cond = conditions[t];
+        return (
+          <span key={t} className="flex items-center">
+            {i === 8 && <span className="mx-1 w-px self-stretch bg-slate-300" />}
+            <button
+              onClick={() => handleToothClick(t)}
+              title={`Diente ${t}${cond ? ` — ${TOOTH_CONDITION_LABELS[cond.condition]}${cond.notes ? `: ${cond.notes}` : ''}` : ''}: ${(byTooth[t] ?? []).length} registro(s)`}
+              className={`relative h-9 w-8 rounded-lg border border-slate-300 text-xs font-bold shadow-sm transition ${toothClass(t)} ${cond?.condition === 'ausente' ? 'opacity-40 line-through' : ''}`}
+            >
+              {t}
+              {cond && (
+                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-violet-600 px-0.5 text-[9px] font-bold text-white">
+                  {TOOTH_CONDITION_SHORT[cond.condition]}
+                </span>
+              )}
+            </button>
+          </span>
+        );
+      })}
     </div>
   );
 
@@ -117,12 +176,24 @@ export function Odontograma({ patientId }: { patientId: string }) {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-semibold text-sky-800">🦷 Odontograma (FDI)</h3>
-        <div className="flex gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="rounded-full bg-sky-600 px-2 py-0.5 font-semibold text-white">Realizado</span>
           <span className="rounded-full bg-amber-400 px-2 py-0.5 font-semibold text-amber-950">Planificado</span>
+          <span className="rounded-full bg-violet-600 px-2 py-0.5 font-semibold text-white">Estado inicial</span>
           <span className="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-slate-500">Sin registros</span>
+          <button
+            onClick={() => { setEditMode((v) => !v); setSelected(null); }}
+            className={`rounded-full px-3 py-0.5 font-semibold ${editMode ? 'bg-violet-600 text-white' : 'border border-violet-300 text-violet-700 hover:bg-violet-50'}`}>
+            {editMode ? '✓ Editando estado inicial' : '✏️ Editar estado inicial'}
+          </button>
         </div>
       </div>
+      {editMode && (
+        <p className="mt-1 text-xs text-slate-500">
+          Click en un diente para marcar su condición de base (caries, ausente, corona previa, etc.) — no es un tratamiento realizado acá, es el estado con el que llegó el paciente.
+        </p>
+      )}
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
 
       <div className="mt-4 space-y-1 overflow-x-auto rounded-xl bg-slate-50 p-4">
         <p className="text-center text-[10px] uppercase tracking-wide text-slate-400">Superior</p>
@@ -132,12 +203,51 @@ export function Odontograma({ patientId }: { patientId: string }) {
         <p className="text-center text-[10px] uppercase tracking-wide text-slate-400">Inferior</p>
       </div>
 
-      {selected && (
+      {selected && editMode && (
+        <div className="mt-3 rounded-xl border border-violet-200 bg-white p-4">
+          <h4 className="font-semibold text-slate-700">
+            Estado inicial — Diente {selected}
+            <button onClick={() => setSelected(null)} className="float-right text-xs text-slate-400 hover:text-slate-600">✕</button>
+          </h4>
+          <label className="mt-3 block text-sm">
+            Condición
+            <select value={conditionDraft} onChange={(e) => setConditionDraft(e.target.value as ToothConditionValue | '')}
+              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm">
+              <option value="">Sin condición (quitar)</option>
+              {TOOTH_CONDITIONS.map((c) => <option key={c} value={c}>{TOOTH_CONDITION_LABELS[c]}</option>)}
+            </select>
+          </label>
+          <label className="mt-2 block text-sm">
+            Notas (opcional)
+            <input value={notesDraft} onChange={(e) => setNotesDraft(e.target.value)}
+              placeholder="Ej: corona metal-porcelana, buen estado"
+              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5 text-sm" />
+          </label>
+          <div className="mt-3 flex gap-2">
+            <button onClick={() => void saveCondition()} disabled={saving}
+              className="rounded bg-violet-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
+              {saving ? 'Guardando…' : 'Guardar'}
+            </button>
+            <button onClick={() => setSelected(null)}
+              className="rounded border border-slate-300 px-4 py-1.5 text-sm text-slate-600 hover:bg-slate-100">
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {selected && !editMode && (
         <div className="mt-3 rounded-xl border border-sky-200 bg-white p-4">
           <h4 className="font-semibold text-slate-700">
             Diente {selected}
             <button onClick={() => setSelected(null)} className="float-right text-xs text-slate-400 hover:text-slate-600">✕</button>
           </h4>
+          {conditions[selected] && (
+            <p className="mt-1 text-sm text-violet-700">
+              <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold">Estado inicial: {TOOTH_CONDITION_LABELS[conditions[selected].condition]}</span>
+              {conditions[selected].notes && <span className="ml-2 text-slate-500">{conditions[selected].notes}</span>}
+            </p>
+          )}
           {recs.length === 0 ? (
             <p className="mt-1 text-sm text-slate-400">Sin tratamientos registrados en este diente.</p>
           ) : (

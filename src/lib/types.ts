@@ -18,6 +18,47 @@ export interface EmergencyContact {
   name?: string; phone?: string; relation?: string;
 }
 
+export const TOOTH_CONDITIONS = [
+  'ausente', 'cariado', 'obturado', 'corona', 'implante', 'endodoncia',
+  'protesis_fija', 'protesis_removible', 'fracturado', 'extraccion_indicada', 'otro',
+] as const;
+export type ToothConditionValue = (typeof TOOTH_CONDITIONS)[number];
+
+export const TOOTH_CONDITION_LABELS: Record<ToothConditionValue, string> = {
+  ausente: 'Ausente',
+  cariado: 'Cariado',
+  obturado: 'Obturado',
+  corona: 'Corona',
+  implante: 'Implante',
+  endodoncia: 'Endodoncia previa',
+  protesis_fija: 'Prótesis fija',
+  protesis_removible: 'Prótesis removible',
+  fracturado: 'Fracturado',
+  extraccion_indicada: 'Extracción indicada',
+  otro: 'Otro',
+};
+
+export const TOOTH_CONDITION_SHORT: Record<ToothConditionValue, string> = {
+  ausente: '∅',
+  cariado: 'Ca',
+  obturado: 'Ob',
+  corona: 'Co',
+  implante: 'Im',
+  endodoncia: 'En',
+  protesis_fija: 'PF',
+  protesis_removible: 'PR',
+  fracturado: 'Fr',
+  extraccion_indicada: 'Ex',
+  otro: '?',
+};
+
+export interface ToothCondition {
+  toothFdi: string;
+  condition: ToothConditionValue;
+  notes?: string;
+  updatedAt?: string;
+}
+
 export interface Patient {
   _id: string;
   firstName: string;
@@ -33,6 +74,7 @@ export interface Patient {
   emergencyContact?: EmergencyContact;
   status: 'active' | 'inactive' | 'archived';
   medicalHistory?: MedicalHistory;
+  toothConditions?: ToothCondition[];
   createdAt?: string;
 }
 
