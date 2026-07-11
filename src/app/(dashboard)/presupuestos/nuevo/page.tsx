@@ -3,7 +3,7 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { PatientPicker } from '@/components/patient-picker';
 import { api, ApiError } from '@/lib/api';
 import { fmtMoney, Patient } from '@/lib/types';
@@ -18,7 +18,17 @@ interface CartItem {
 const input =
   'mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none';
 
+// DONE: useSearchParams() exige un Suspense boundary en build de producción de
+// Next.js (Vercel lo hace cumplir aunque el build local con Turbopack no avise)
 export default function NuevoPresupuestoPage() {
+  return (
+    <Suspense fallback={<p className="text-slate-400">Cargando…</p>}>
+      <NuevoPresupuestoForm />
+    </Suspense>
+  );
+}
+
+function NuevoPresupuestoForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [patient, setPatient] = useState<Patient | null>(null);
