@@ -216,6 +216,7 @@ export default function AgendaPage() {
       {form && (
         <NuevaCitaForm
           doctors={doctors} defaultDoctorId={doctorId} prefill={form} templates={templates}
+          onSaved={load}
           onCreated={() => { setForm(null); void load(); }}
         />
       )}
@@ -556,11 +557,15 @@ function RemindersPanel({ date, appts, patients, doctorName, templates, onTempla
   );
 }
 
-function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onCreated }: {
+function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onSaved, onCreated }: {
   doctors: Professional[];
   defaultDoctorId: string;
   prefill: { date: string; start: string; end: string };
   templates: MessageTemplate[];
+  /** Recarga el calendario YA, apenas se crea — no esperar a que cierren la
+   *  confirmación (bug reportado: "agendo y no sale en la semana" porque el
+   *  usuario mandaba el WhatsApp y no alcanzaba a apretar "Listo") */
+  onSaved: () => void;
   onCreated: () => void;
 }) {
   const session = getSession();
@@ -608,6 +613,7 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onCreated
         motivo: f.reason ? ` Motivo: ${f.reason}.` : '',
       });
       setCreated({ warning: res.specialtyWarning, waUrl: waLink(patient.phone, msg) });
+      onSaved(); // el calendario queda al día YA, sin depender del botón "Listo"
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Error');
     }

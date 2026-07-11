@@ -85,6 +85,8 @@ export interface ProcedureRow {
   value: number;
   status: string;
   completedAt?: string;
+  clinicalNote?: string;
+  clinicalNoteAt?: string;
 }
 
 export interface AccountStatement {

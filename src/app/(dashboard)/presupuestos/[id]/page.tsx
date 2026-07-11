@@ -13,6 +13,7 @@ interface PlanItem {
   _id: string; code: string; description: string; toothFdi?: string;
   unitPrice: number; quantity: number; discount: number; subtotal: number;
   priority: number; status: 'planned' | 'completed' | 'cancelled';
+  executedProcedureId?: string;
 }
 interface Plan {
   _id: string; patientId: string; title?: string; status: string; isActive: boolean;
@@ -27,6 +28,9 @@ export default function PresupuestoDetallePage() {
   const [doctors, setDoctors] = useState<Professional[]>([]);
   const [doctorId, setDoctorId] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [noteModal, setNoteModal] = useState<{ itemId?: string; procedureId?: string } | null>(null);
+  const [noteText, setNoteText] = useState('');
+  const [noteSaving, setNoteSaving] = useState(false);
 
   const load = useCallback(async () => {
     const p = await api<Plan>(`/treatment-plans/${id}`);
@@ -50,16 +54,51 @@ export default function PresupuestoDetallePage() {
     } catch (err) { setError(err instanceof ApiError ? err.message : 'Error'); }
   }
 
-  async function completeItem(itemId: string) {
+  async function completeItem(itemId: string, clinicalNote: string) {
     setError(null);
     if (!doctorId) { setError('Selecciona el doctor que realizó el procedimiento'); return; }
     try {
       await api(`/treatment-plans/${id}/items/${itemId}/complete`, {
         method: 'POST',
-        body: { performedByProviderId: doctorId },
+        body: { performedByProviderId: doctorId, clinicalNote: clinicalNote || undefined },
       });
       await load();
     } catch (err) { setError(err instanceof ApiError ? err.message : 'Error'); }
+  }
+
+  function openCompleteModal(itemId: string) {
+    if (!doctorId) { setError('Selecciona el doctor que realizó el procedimiento'); return; }
+    setNoteText('');
+    setNoteModal({ itemId });
+  }
+
+  async function openNoteModal(procedureId: string) {
+    setError(null);
+    setNoteText('');
+    setNoteModal({ procedureId });
+    try {
+      const proc = await api<{ clinicalNote?: string }>(`/procedures/${procedureId}`);
+      setNoteText(proc.clinicalNote ?? '');
+    } catch (err) { setError(err instanceof ApiError ? err.message : 'Error'); }
+  }
+
+  async function submitNoteModal() {
+    if (!noteModal) return;
+    setNoteSaving(true);
+    setError(null);
+    try {
+      if (noteModal.itemId) {
+        await completeItem(noteModal.itemId, noteText);
+      } else if (noteModal.procedureId) {
+        await api(`/procedures/${noteModal.procedureId}/clinical-note`, {
+          method: 'PATCH',
+          body: { clinicalNote: noteText },
+        });
+        await load();
+      }
+      setNoteModal(null);
+    } catch (err) { setError(err instanceof ApiError ? err.message : 'Error'); }
+    finally { setNoteSaving(false); }
   }
 
   if (error && !plan) return <p className="text-red-600">{error}</p>;
@@ -161,9 +200,15 @@ export default function PresupuestoDetallePage() {
                 </td>
                 <td className="px-4 py-2 text-right">
                   {canExecute && i.status === 'planned' && (
-                    <button onClick={() => void completeItem(i._id)}
+                    <button onClick={() => openCompleteModal(i._id)}
                       className="rounded bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-700">
                       Completar
+                    </button>
+                  )}
+                  {i.status === 'completed' && i.executedProcedureId && (
+                    <button onClick={() => void openNoteModal(i.executedProcedureId!)}
+                      className="print:hidden rounded border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100">
+                      📝 Historial
                     </button>
                   )}
                 </td>
@@ -179,6 +224,39 @@ export default function PresupuestoDetallePage() {
           </tbody>
         </table>
       </div>
+
+      {noteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
+            <h2 className="text-lg font-bold text-slate-800">
+              {noteModal.itemId ? 'Completar ítem' : 'Historial clínico'}
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {noteModal.itemId
+                ? 'Qué se le hizo al paciente (opcional, se puede completar después).'
+                : 'Qué se le hizo al paciente en este procedimiento.'}
+            </p>
+            <textarea
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              rows={5}
+              autoFocus
+              placeholder="Ej: Endodoncia pieza 26, sin complicaciones, control en 15 días…"
+              className="mt-3 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setNoteModal(null)}
+                className="rounded border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-100">
+                Cancelar
+              </button>
+              <button onClick={() => void submitNoteModal()} disabled={noteSaving}
+                className="rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+                {noteSaving ? 'Guardando…' : noteModal.itemId ? 'Completar' : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

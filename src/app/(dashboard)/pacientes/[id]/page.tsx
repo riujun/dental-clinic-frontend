@@ -435,26 +435,90 @@ function PresupuestosTab({ patientId }: { patientId: string }) {
 
 function ProcedimientosTab({ patientId }: { patientId: string }) {
   const [rows, setRows] = useState<ProcedureRow[] | null>(null);
-  useEffect(() => {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(() => {
     api<ProcedureRow[]>(`/procedures?patientId=${patientId}`).then(setRows).catch(() => setRows([]));
   }, [patientId]);
+  useEffect(() => { load(); }, [load]);
+
+  function startEdit(r: ProcedureRow) {
+    setEditingId(r._id);
+    setNoteDraft(r.clinicalNote ?? '');
+  }
+
+  async function saveNote(id: string) {
+    setSaving(true);
+    try {
+      await api(`/procedures/${id}/clinical-note`, { method: 'PATCH', body: { clinicalNote: noteDraft } });
+      setEditingId(null);
+      load();
+    } catch { /* noop */ }
+    finally { setSaving(false); }
+  }
+
   if (!rows) return <p className="text-slate-400">Cargando…</p>;
   if (rows.length === 0) return <p className="text-slate-400">Sin procedimientos aún.</p>;
   return (
     <table className="w-full text-sm">
       <thead className="text-left text-slate-500">
-        <tr><th className="py-2">Código</th><th>Descripción</th><th>Diente</th><th>Estado</th><th className="text-right">Valor</th><th>Realizado</th></tr>
+        <tr><th className="py-2">Código</th><th>Descripción</th><th>Diente</th><th>Estado</th><th className="text-right">Valor</th><th>Realizado</th><th /></tr>
       </thead>
       <tbody>
         {rows.map((r) => (
-          <tr key={r._id} className="border-t border-slate-100">
-            <td className="py-2">{r.code}</td>
-            <td>{r.description}</td>
-            <td>{r.toothFdi ?? '—'}</td>
-            <td>{{ planned: 'Planificado', completed: 'Realizado', cancelled: 'Cancelado' }[r.status] ?? r.status}</td>
-            <td className={`text-right ${r.value < 0 ? 'text-red-600' : ''}`}>${fmtMoney(r.value)}</td>
-            <td>{fmtDate(r.completedAt)}</td>
-          </tr>
+          <>
+            <tr key={r._id} className="border-t border-slate-100 align-top">
+              <td className="py-2">{r.code}</td>
+              <td>{r.description}</td>
+              <td>{r.toothFdi ?? '—'}</td>
+              <td>{{ planned: 'Planificado', completed: 'Realizado', cancelled: 'Cancelado' }[r.status] ?? r.status}</td>
+              <td className={`text-right ${r.value < 0 ? 'text-red-600' : ''}`}>${fmtMoney(r.value)}</td>
+              <td>{fmtDate(r.completedAt)}</td>
+              <td className="text-right">
+                {r.status === 'completed' && editingId !== r._id && (
+                  <button onClick={() => startEdit(r)}
+                    className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100">
+                    {r.clinicalNote ? '📝 Editar' : '📝 Agregar historial'}
+                  </button>
+                )}
+              </td>
+            </tr>
+            {r.status === 'completed' && editingId !== r._id && r.clinicalNote && (
+              <tr className="border-t border-dashed border-slate-100 bg-slate-50/60">
+                <td />
+                <td colSpan={6} className="py-2 text-xs text-slate-600">
+                  <span className="font-semibold text-slate-500">Historial clínico:</span> {r.clinicalNote}
+                </td>
+              </tr>
+            )}
+            {editingId === r._id && (
+              <tr className="border-t border-slate-100 bg-slate-50">
+                <td />
+                <td colSpan={6} className="py-2">
+                  <textarea
+                    value={noteDraft}
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                    rows={3}
+                    autoFocus
+                    placeholder="Qué se le hizo al paciente…"
+                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  />
+                  <div className="mt-2 flex gap-2">
+                    <button onClick={() => void saveNote(r._id)} disabled={saving}
+                      className="rounded bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+                      {saving ? 'Guardando…' : 'Guardar'}
+                    </button>
+                    <button onClick={() => setEditingId(null)}
+                      className="rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 hover:bg-slate-100">
+                      Cancelar
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </>
         ))}
       </tbody>
     </table>
