@@ -110,6 +110,29 @@ export interface Appointment {
   lastReminderAt?: string;
 }
 
+export const WAITLIST_STATUSES = ['waiting', 'contacted', 'scheduled', 'cancelled'] as const;
+export type WaitlistStatus = (typeof WAITLIST_STATUSES)[number];
+
+export const WAITLIST_STATUS_LABELS: Record<WaitlistStatus, string> = {
+  waiting: '⏳ Esperando',
+  contacted: '📞 Contactado',
+  scheduled: '✅ Agendado',
+  cancelled: '✕ Cancelado',
+};
+
+export interface WaitlistEntry {
+  _id: string;
+  patientId: string;
+  professionalId?: string;
+  reason?: string;
+  notes?: string;
+  preferredFrom?: string;
+  preferredTo?: string;
+  status: WaitlistStatus;
+  resolvedAppointmentId?: string;
+  createdAt?: string;
+}
+
 export interface TreatmentPlan {
   _id: string;
   title?: string;

@@ -22,6 +22,10 @@ import {
   Patient,
   Professional,
   titleCase,
+  WaitlistEntry,
+  WaitlistStatus,
+  WAITLIST_STATUS_LABELS,
+  WAITLIST_STATUSES,
   withDrPrefix,
 } from '@/lib/types';
 import { fillTemplate, MessageTemplate, waLink } from '@/lib/whatsapp';
@@ -88,8 +92,15 @@ export default function AgendaPage() {
   const [appts, setAppts] = useState<Appointment[]>([]);
   const [patients, setPatients] = useState<Record<string, PatientInfo>>({});
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
-  const [form, setForm] = useState<{ date: string; start: string; end: string } | null>(null);
+  const [form, setForm] = useState<{
+    date: string; start: string; end: string;
+    prefillPatient?: Patient; waitlistEntryId?: string; professionalId?: string;
+  } | null>(null);
   const [showReminders, setShowReminders] = useState(false);
+  const [showWaitlist, setShowWaitlist] = useState(false);
+  const [waitlistSuggestion, setWaitlistSuggestion] = useState<{
+    date: string; professionalId: string; matches: WaitlistEntry[];
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -138,9 +149,38 @@ export default function AgendaPage() {
 
   async function changeStatus(id: string, status: string) {
     setError(null);
+    const target = appts.find((a) => a._id === id);
     try {
       await api(`/appointments/${id}/status`, { method: 'POST', body: { status } });
       await load();
+      // Idea #8: al cancelar, sugerir a quién de la lista de espera ofrecerle el hueco liberado
+      if (status === 'cancelled' && target) {
+        const day = toYMD(new Date(target.startAt));
+        const dateISO = dayRangeISO(day).from;
+        const matches = await api<WaitlistEntry[]>(
+          `/waitlist/matches?professionalId=${target.professionalId}&date=${encodeURIComponent(dateISO)}`,
+        ).catch(() => []);
+        if (matches.length > 0) {
+          setWaitlistSuggestion({ date: day, professionalId: target.professionalId, matches });
+          setShowWaitlist(true);
+        }
+      }
+    } catch (err) { setError(err instanceof ApiError ? err.message : 'Error'); }
+  }
+
+  /** Idea #8: agendar directamente a alguien de la lista de espera */
+  async function scheduleFromWaitlist(entry: WaitlistEntry) {
+    setError(null);
+    try {
+      const profile = await api<{ patient: Patient }>(`/patients/${entry.patientId}`);
+      setForm({
+        date: waitlistSuggestion?.date ?? toYMD(new Date()),
+        start: '10:00', end: '10:30',
+        prefillPatient: profile.patient,
+        waitlistEntryId: entry._id,
+        professionalId: entry.professionalId,
+      });
+      setShowWaitlist(false);
     } catch (err) { setError(err instanceof ApiError ? err.message : 'Error'); }
   }
 
@@ -192,6 +232,16 @@ export default function AgendaPage() {
               📣 Recordatorios del día
             </button>
           )}
+          {/* Idea #8: independiente del día/vista que se esté mirando (pedido de Fabián) */}
+          <button onClick={() => { setShowWaitlist((s) => !s); if (showWaitlist) setWaitlistSuggestion(null); }}
+            className="relative rounded bg-violet-600 px-4 py-1.5 font-semibold text-white hover:bg-violet-700">
+            🕐 Lista de espera
+            {waitlistSuggestion && waitlistSuggestion.matches.length > 0 && (
+              <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-xs font-bold">
+                {waitlistSuggestion.matches.length}
+              </span>
+            )}
+          </button>
           <button onClick={() => setForm(form ? null : { date: anchor, start: '10:00', end: '10:30' })}
             className="rounded bg-sky-600 px-4 py-1.5 font-semibold text-white hover:bg-sky-700">
             + Nueva cita
@@ -213,9 +263,18 @@ export default function AgendaPage() {
         />
       )}
 
+      {showWaitlist && (
+        <WaitlistPanel
+          doctors={doctors} suggestion={waitlistSuggestion}
+          onSchedule={(entry) => void scheduleFromWaitlist(entry)}
+          onClose={() => { setShowWaitlist(false); setWaitlistSuggestion(null); }}
+        />
+      )}
+
       {form && (
         <NuevaCitaForm
-          doctors={doctors} defaultDoctorId={doctorId} prefill={form} templates={templates}
+          doctors={doctors} defaultDoctorId={form.professionalId ?? doctorId} prefill={form} templates={templates}
+          prefillPatient={form.prefillPatient} waitlistEntryId={form.waitlistEntryId}
           onSaved={load}
           onCreated={() => { setForm(null); void load(); }}
         />
@@ -557,7 +616,7 @@ function RemindersPanel({ date, appts, patients, doctorName, templates, onTempla
   );
 }
 
-function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onSaved, onCreated }: {
+function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onSaved, onCreated, prefillPatient, waitlistEntryId }: {
   doctors: Professional[];
   defaultDoctorId: string;
   prefill: { date: string; start: string; end: string };
@@ -567,9 +626,13 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onSaved, 
    *  usuario mandaba el WhatsApp y no alcanzaba a apretar "Listo") */
   onSaved: () => void;
   onCreated: () => void;
+  /** Idea #8: agendar directo desde la lista de espera — precarga al paciente
+   *  y, al crear la cita, marca ese registro de espera como 'scheduled' */
+  prefillPatient?: Patient;
+  waitlistEntryId?: string;
 }) {
   const session = getSession();
-  const [patient, setPatient] = useState<Patient | null>(null);
+  const [patient, setPatient] = useState<Patient | null>(prefillPatient ?? null);
   const [f, setF] = useState({
     professionalId: defaultDoctorId,
     date: prefill.date, start: prefill.start, end: prefill.end,
@@ -592,7 +655,7 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onSaved, 
     if (!patient) { setError('Selecciona un paciente'); return; }
     setError(null);
     try {
-      const res = await api<{ specialtyWarning: boolean }>('/appointments', {
+      const res = await api<{ appointment: { _id: string }; specialtyWarning: boolean }>('/appointments', {
         method: 'POST',
         body: {
           patientId: patient._id, professionalId: f.professionalId,
@@ -602,6 +665,12 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onSaved, 
           requiredSpecialty: f.requiredSpecialty || undefined,
         },
       });
+      if (waitlistEntryId) {
+        await api(`/waitlist/${waitlistEntryId}/status`, {
+          method: 'PATCH',
+          body: { status: 'scheduled', appointmentId: res.appointment._id },
+        }).catch(() => null);
+      }
       // Requerimiento Fabián: enviar mensaje al paciente al agendar (wa.me)
       const tpl = templates.find((t) => t.key === 'cita_confirmacion');
       const msg = fillTemplate(tpl?.body ?? '', {
@@ -704,6 +773,222 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onSaved, 
       <button type="submit" className="mt-4 rounded bg-sky-600 px-5 py-2 font-semibold text-white hover:bg-sky-700">
         Agendar
       </button>
+    </form>
+  );
+}
+
+/** Idea #8: lista de espera conectada a cancelaciones — independiente del
+ *  día/vista que se esté mirando en la agenda (pedido de Fabián) */
+function WaitlistPanel({ doctors, suggestion, onSchedule, onClose }: {
+  doctors: Professional[];
+  suggestion: { date: string; professionalId: string; matches: WaitlistEntry[] } | null;
+  onSchedule: (entry: WaitlistEntry) => void;
+  onClose: () => void;
+}) {
+  const [statusFilter, setStatusFilter] = useState<WaitlistStatus>('waiting');
+  const [entries, setEntries] = useState<WaitlistEntry[] | null>(null);
+  const [patients, setPatients] = useState<Record<string, PatientInfo>>({});
+  const [showAdd, setShowAdd] = useState(false);
+  const [messages, setMessages] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const list = await api<WaitlistEntry[]>(`/waitlist?status=${statusFilter}`);
+    setEntries(list);
+    setPatients(await fetchPatientInfo(list.map((e) => e.patientId)));
+  }, [statusFilter]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function setStatus(id: string, status: WaitlistStatus) {
+    setError(null);
+    try {
+      await api(`/waitlist/${id}/status`, { method: 'PATCH', body: { status } });
+      await load();
+    } catch (err) { setError(err instanceof ApiError ? err.message : 'Error'); }
+  }
+
+  const doctorName = (id?: string) =>
+    id ? titleCase(doctors.find((d) => d._id === id)?.fullName ?? '') : 'Cualquier doctor';
+
+  const matchIds = new Set((suggestion?.matches ?? []).map((m) => m._id));
+  const sorted = entries
+    ? [...entries].sort((a, b) => Number(matchIds.has(b._id)) - Number(matchIds.has(a._id)))
+    : [];
+
+  const rangeLabel = (from?: string, to?: string) => {
+    if (!from && !to) return 'Cualquier día';
+    const f = from ? parseYMD(toYMD(new Date(from))).toLocaleDateString('es-CL', { day: 'numeric', month: 'short' }) : '…';
+    const t = to ? parseYMD(toYMD(new Date(to))).toLocaleDateString('es-CL', { day: 'numeric', month: 'short' }) : '…';
+    return `${f} — ${t}`;
+  };
+
+  return (
+    <div className="mt-4 rounded-xl border-2 border-violet-300 bg-white p-5 shadow">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold text-violet-800">🕐 Lista de espera</h2>
+        <div className="flex items-center gap-2 text-sm">
+          <button onClick={() => setShowAdd((s) => !s)}
+            className="rounded bg-violet-600 px-3 py-1.5 font-semibold text-white hover:bg-violet-700">
+            {showAdd ? 'Cancelar' : '+ Agregar paciente'}
+          </button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕ Cerrar</button>
+        </div>
+      </div>
+
+      {suggestion && suggestion.matches.length > 0 && (
+        <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+          🔔 Se liberó un horario el {parseYMD(suggestion.date).toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' })} con {doctorName(suggestion.professionalId)} — {suggestion.matches.length} paciente(s) en lista de espera podrían tomarlo (resaltados abajo).
+        </div>
+      )}
+
+      {showAdd && (
+        <AddWaitlistForm doctors={doctors} onAdded={() => { setShowAdd(false); void load(); }} onCancel={() => setShowAdd(false)} />
+      )}
+
+      <div className="mt-3 flex gap-1 text-xs">
+        {WAITLIST_STATUSES.map((s) => (
+          <button key={s} onClick={() => setStatusFilter(s)}
+            className={`rounded-full px-3 py-1 font-semibold ${statusFilter === s ? 'bg-violet-600 text-white' : 'border border-slate-300 text-slate-600 hover:bg-slate-100'}`}>
+            {WAITLIST_STATUS_LABELS[s]}
+          </button>
+        ))}
+      </div>
+
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+
+      {!entries ? (
+        <p className="mt-3 text-sm text-slate-400">Cargando…</p>
+      ) : sorted.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-400">Sin pacientes en esta categoría.</p>
+      ) : (
+        <div className="mt-3 space-y-3">
+          {sorted.map((entry) => {
+            const info = patients[entry.patientId];
+            const isMatch = matchIds.has(entry._id);
+            const defaultMsg = `Hola ${titleCase(info?.firstName ?? '')}, se liberó un horario${isMatch && suggestion ? ` el ${parseYMD(suggestion.date).toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' })}` : ''} con ${doctorName(entry.professionalId)} en la clínica. ¿Te gustaría tomarlo? Avísanos para confirmarte.`;
+            const msg = messages[entry._id] ?? defaultMsg;
+            const link = waLink(info?.phone, msg);
+            return (
+              <div key={entry._id} className={`rounded-lg border p-3 ${isMatch ? 'border-amber-400 bg-amber-50' : 'border-slate-200'}`}>
+                <p className="text-sm font-semibold">
+                  <Link href={`/pacientes/${entry.patientId}`} className="text-sky-700 hover:underline">{info?.name ?? '…'}</Link>
+                  <span className="ml-2 font-normal text-slate-400">{info?.phone ?? 'SIN TELÉFONO'}</span>
+                  {isMatch && <span className="ml-2 rounded bg-amber-200 px-2 py-0.5 text-xs text-amber-900">🔔 match</span>}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {doctorName(entry.professionalId)} · {entry.reason || 'Sin motivo especificado'} · Prefiere: {rangeLabel(entry.preferredFrom, entry.preferredTo)}
+                </p>
+                {entry.notes && <p className="text-xs italic text-slate-400">{entry.notes}</p>}
+
+                {(entry.status === 'waiting' || entry.status === 'contacted') && (
+                  <>
+                    <textarea rows={2} value={msg}
+                      onChange={(e) => setMessages((m) => ({ ...m, [entry._id]: e.target.value }))}
+                      className="mt-1 w-full rounded border border-slate-200 px-2 py-1 text-sm" />
+                    <div className="mt-1 flex flex-wrap gap-2 text-xs">
+                      {link ? (
+                        <a href={link} target="_blank" rel="noreferrer" onClick={() => void setStatus(entry._id, 'contacted')}
+                          className="rounded bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-700">
+                          📲 Enviar WhatsApp
+                        </a>
+                      ) : (
+                        <span className="rounded bg-slate-100 px-3 py-1.5 text-slate-400">Sin teléfono</span>
+                      )}
+                      <button onClick={() => onSchedule(entry)}
+                        className="rounded bg-sky-600 px-3 py-1.5 font-semibold text-white hover:bg-sky-700">
+                        📅 Agendar
+                      </button>
+                      <button onClick={() => void setStatus(entry._id, 'cancelled')}
+                        className="rounded border border-slate-300 px-3 py-1.5 text-slate-600 hover:bg-slate-100">
+                        ✕ Quitar de la lista
+                      </button>
+                    </div>
+                  </>
+                )}
+                {entry.status === 'scheduled' && <p className="mt-1 text-xs text-emerald-700">✅ Ya se agendó.</p>}
+                {entry.status === 'cancelled' && <p className="mt-1 text-xs text-slate-400">Quitado de la lista.</p>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddWaitlistForm({ doctors, onAdded, onCancel }: {
+  doctors: Professional[];
+  onAdded: () => void;
+  onCancel: () => void;
+}) {
+  const [patient, setPatient] = useState<Patient | null>(null);
+  const [professionalId, setProfessionalId] = useState('');
+  const [reason, setReason] = useState('');
+  const [notes, setNotes] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!patient) { setError('Selecciona un paciente'); return; }
+    setError(null);
+    setSaving(true);
+    try {
+      await api('/waitlist', {
+        method: 'POST',
+        body: {
+          patientId: patient._id,
+          professionalId: professionalId || undefined,
+          reason: reason || undefined,
+          notes: notes || undefined,
+          preferredFrom: fromDate ? dayRangeISO(fromDate).from : undefined,
+          preferredTo: toDate ? dayRangeISO(toDate).to : undefined,
+        },
+      });
+      onAdded();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Error');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-3 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        <div className="relative col-span-2">
+          Paciente *
+          <PatientPicker patient={patient} onSelect={setPatient} />
+        </div>
+        <label>Doctor preferido
+          <select className={input} value={professionalId} onChange={(e) => setProfessionalId(e.target.value)}>
+            <option value="">Cualquiera</option>
+            {doctors.map((d) => <option key={d._id} value={d._id}>{titleCase(d.fullName)}</option>)}
+          </select>
+        </label>
+        <label>Motivo
+          <input className={input} value={reason} onChange={(e) => setReason(e.target.value)} />
+        </label>
+        <label>Podría venir desde
+          <input type="date" className={input} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+        </label>
+        <label>Hasta
+          <input type="date" className={input} value={toDate} onChange={(e) => setToDate(e.target.value)} />
+        </label>
+        <label className="col-span-2">Notas
+          <input className={input} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </label>
+      </div>
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      <div className="mt-2 flex gap-2">
+        <button type="submit" disabled={saving}
+          className="rounded bg-violet-600 px-4 py-1.5 font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
+          {saving ? 'Guardando…' : 'Agregar a la lista'}
+        </button>
+        <button type="button" onClick={onCancel} className="text-slate-500 hover:underline">Cancelar</button>
+      </div>
     </form>
   );
 }
