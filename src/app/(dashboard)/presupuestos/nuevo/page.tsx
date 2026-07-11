@@ -2,8 +2,9 @@
 // precio autocompletado pero EDITABLE (snapshot), total en vivo, guarda como DRAFT
 'use client';
 
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { PatientPicker } from '@/components/patient-picker';
 import { api, ApiError } from '@/lib/api';
 import { fmtMoney, Patient } from '@/lib/types';
 
@@ -19,8 +20,7 @@ const input =
 
 export default function NuevoPresupuestoPage() {
   const router = useRouter();
-  const [patientSearch, setPatientSearch] = useState('');
-  const [results, setResults] = useState<Patient[]>([]);
+  const searchParams = useSearchParams();
   const [patient, setPatient] = useState<Patient | null>(null);
   const [title, setTitle] = useState('Plan de tratamiento');
   const [scheduleId, setScheduleId] = useState('');
@@ -36,14 +36,15 @@ export default function NuevoPresupuestoPage() {
     }).catch(() => null);
   }, []);
 
+  // Item G (pedido de Fabián): llegando desde la ficha del paciente
+  // (/presupuestos/nuevo?patientId=...) se preselecciona sin re-buscar
   useEffect(() => {
-    if (patient || patientSearch.trim().length < 2) { setResults([]); return; }
-    const t = setTimeout(() => {
-      api<Patient[]>(`/patients?search=${encodeURIComponent(patientSearch)}`)
-        .then((r) => setResults(r.slice(0, 5))).catch(() => setResults([]));
-    }, 300);
-    return () => clearTimeout(t);
-  }, [patientSearch, patient]);
+    const patientId = searchParams.get('patientId');
+    if (!patientId) return;
+    api<{ patient: Patient }>(`/patients/${patientId}`)
+      .then((p) => setPatient(p.patient))
+      .catch(() => null);
+  }, [searchParams]);
 
   useEffect(() => {
     if (!scheduleId || feeSearch.trim().length < 1) { setFeeResults([]); return; }
@@ -98,28 +99,7 @@ export default function NuevoPresupuestoPage() {
       <div className="mt-4 grid gap-3 rounded-xl bg-white p-5 shadow md:grid-cols-2">
         <div className="relative text-sm">
           Paciente *
-          {patient ? (
-            <p className="mt-1 flex items-center justify-between rounded border border-emerald-300 bg-emerald-50 px-3 py-2">
-              {patient.lastName}, {patient.firstName}
-              <button type="button" className="text-xs text-slate-500 hover:underline"
-                onClick={() => { setPatient(null); setPatientSearch(''); }}>cambiar</button>
-            </p>
-          ) : (
-            <>
-              <input className={input} placeholder="Buscar paciente…" value={patientSearch}
-                onChange={(e) => setPatientSearch(e.target.value)} />
-              {results.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full rounded border border-slate-200 bg-white shadow">
-                  {results.map((r) => (
-                    <button type="button" key={r._id} onClick={() => setPatient(r)}
-                      className="block w-full px-3 py-2 text-left hover:bg-sky-50">
-                      {r.lastName}, {r.firstName}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
+          <PatientPicker patient={patient} onSelect={setPatient} />
         </div>
         <label className="text-sm">Título
           <input className={input} value={title} onChange={(e) => setTitle(e.target.value)} />

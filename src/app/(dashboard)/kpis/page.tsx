@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, apiDownload } from '@/lib/api';
+import { dayRangeISO } from '@/lib/dates';
 import { fmtMoney } from '@/lib/types';
 
 interface Dashboard {
@@ -41,7 +42,9 @@ export default function KpisPage() {
   const [d, setD] = useState<Dashboard | null>(null);
 
   const load = useCallback(() => {
-    api<Dashboard>(`/reports/dashboard?from=${from}T00:00:00&to=${to}T23:59:59`)
+    const { from: f } = dayRangeISO(from);
+    const { to: t } = dayRangeISO(to);
+    api<Dashboard>(`/reports/dashboard?from=${f}&to=${t}`)
       .then(setD)
       .catch(() => setD(null));
   }, [from, to]);

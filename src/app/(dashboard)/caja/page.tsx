@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { dayRangeISO, todayLocal } from '@/lib/dates';
 import { fetchPatientNames } from '@/lib/lookups';
 import { fmtMoney, fmtTime } from '@/lib/types';
 
@@ -22,12 +23,13 @@ const METHOD_LABELS: Record<string, string> = {
 };
 
 export default function CajaPage() {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayLocal());
   const [daily, setDaily] = useState<Daily | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    api<Daily>(`/cash-register/daily?date=${date}`).then(async (d) => {
+    const { from, to } = dayRangeISO(date);
+    api<Daily>(`/cash-register/daily?from=${from}&to=${to}`).then(async (d) => {
       setDaily(d);
       setNames(await fetchPatientNames(d.collections.payments.map((p) => p.patientId)));
     }).catch(() => setDaily(null));

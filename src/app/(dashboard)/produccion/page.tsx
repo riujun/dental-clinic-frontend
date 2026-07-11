@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, apiDownload } from '@/lib/api';
+import { dayRangeISO, todayLocal } from '@/lib/dates';
 import { fmtDate, fmtMoney, Professional } from '@/lib/types';
 
 interface ProdRow {
@@ -32,11 +33,10 @@ const monthStart = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
 };
-const today = () => new Date().toISOString().slice(0, 10);
 
 export default function ProduccionPage() {
   const [from, setFrom] = useState(monthStart());
-  const [to, setTo] = useState(today());
+  const [to, setTo] = useState(todayLocal());
   const [doctors, setDoctors] = useState<Professional[]>([]);
   const [providerId, setProviderId] = useState('');
   const [report, setReport] = useState<Report | null>(null);
@@ -45,11 +45,11 @@ export default function ProduccionPage() {
     api<Professional[]>('/professionals').then(setDoctors).catch(() => null);
   }, []);
 
-  const query = useCallback(
-    () =>
-      `from=${from}T00:00:00&to=${to}T23:59:59${providerId ? `&providerId=${providerId}` : ''}`,
-    [from, to, providerId],
-  );
+  const query = useCallback(() => {
+    const { from: f } = dayRangeISO(from);
+    const { to: t } = dayRangeISO(to);
+    return `from=${f}&to=${t}${providerId ? `&providerId=${providerId}` : ''}`;
+  }, [from, to, providerId]);
 
   useEffect(() => {
     api<Report>(`/reports/production?${query()}`).then(setReport).catch(() => setReport(null));

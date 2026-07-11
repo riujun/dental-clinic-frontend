@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, apiDownload } from '@/lib/api';
+import { localToISO, todayLocal } from '@/lib/dates';
 import { fmtDate, fmtMoney, Professional } from '@/lib/types';
 
 interface Settlement {
@@ -31,7 +32,7 @@ export default function ComisionesPage() {
   const [doctors, setDoctors] = useState<Professional[]>([]);
   const [providerId, setProviderId] = useState('');
   const [from, setFrom] = useState(monthStart());
-  const [to, setTo] = useState(new Date().toISOString().slice(0, 10));
+  const [to, setTo] = useState(todayLocal());
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,7 +76,7 @@ export default function ComisionesPage() {
         <button
           onClick={() => void run(() => api('/commissions/settlements', {
             method: 'POST',
-            body: { providerId, from: `${from}T00:00:00`, to: `${to}T23:59:59` },
+            body: { providerId, from: localToISO(from, '00:00:00'), to: localToISO(to, '23:59:59') },
           }))}
           className="rounded bg-sky-600 px-5 py-2 font-semibold text-white hover:bg-sky-700">
           Generar liquidación

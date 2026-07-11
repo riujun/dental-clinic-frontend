@@ -11,6 +11,13 @@ export interface MedicalHistory {
   freeNotes?: string;
 }
 
+export interface Address {
+  street?: string; city?: string; state?: string; zip?: string; country?: string;
+}
+export interface EmergencyContact {
+  name?: string; phone?: string; relation?: string;
+}
+
 export interface Patient {
   _id: string;
   firstName: string;
@@ -19,8 +26,11 @@ export interface Patient {
   documentNumber?: string;
   birthDate?: string;
   sex?: string;
+  occupation?: string;
   email?: string;
   phone?: string;
+  address?: Address;
+  emergencyContact?: EmergencyContact;
   status: 'active' | 'inactive' | 'archived';
   medicalHistory?: MedicalHistory;
   createdAt?: string;
@@ -113,6 +123,19 @@ export const APPT_STATUS_ICONS: Record<Appointment['status'], string> = {
   cancelled: '✖️',
   no_show: '🚫',
 };
+
+/** "carolina ponce" → "Carolina Ponce" — nombres bien escritos en pantalla y
+ *  en los mensajes de WhatsApp (pedido de Fabián) */
+export function titleCase(s: string): string {
+  return s.replace(/\S+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+}
+
+/** "carolina" → "Dr(a). Carolina" — prefijo genérico ya que no registramos
+ *  género/título formal del profesional */
+export function withDrPrefix(name: string): string {
+  const clean = titleCase(name.replace(/^dr\.?a?\.?\s+/i, ''));
+  return `Dr(a). ${clean}`;
+}
 
 export const fmtMoney = (n: number) =>
   new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(n);

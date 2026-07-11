@@ -7,10 +7,13 @@
 // TODO: pendiente Fase 2 - envío automático (Twilio+BullMQ), sillones/recursos
 'use client';
 
+import Link from 'next/link';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { getSession } from '@/lib/auth';
+import { dayRangeISO, localToISO } from '@/lib/dates';
 import { fetchPatientInfo, PatientInfo } from '@/lib/lookups';
+import { PatientPicker } from '@/components/patient-picker';
 import {
   Appointment,
   APPT_STATUS_ICONS,
@@ -18,6 +21,8 @@ import {
   fmtTime,
   Patient,
   Professional,
+  titleCase,
+  withDrPrefix,
 } from '@/lib/types';
 import { fillTemplate, MessageTemplate, waLink } from '@/lib/whatsapp';
 
@@ -110,9 +115,11 @@ export default function AgendaPage() {
 
   const load = useCallback(async () => {
     if (!doctorId) return;
-    const { from, to } = range();
+    const { from: fromDate, to: toDate } = range();
+    const { from } = dayRangeISO(fromDate);
+    const { to } = dayRangeISO(toDate);
     const list = await api<Appointment[]>(
-      `/appointments?professionalId=${doctorId}&from=${from}T00:00:00&to=${to}T23:59:59`,
+      `/appointments?professionalId=${doctorId}&from=${from}&to=${to}`,
     );
     setAppts(list);
     setPatients(await fetchPatientInfo(list.map((a) => a.patientId)));
@@ -177,7 +184,7 @@ export default function AgendaPage() {
           </div>
           <select className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm"
             value={doctorId} onChange={(e) => setDoctorId(e.target.value)}>
-            {doctors.map((d) => <option key={d._id} value={d._id}>{d.fullName}</option>)}
+            {doctors.map((d) => <option key={d._id} value={d._id}>{titleCase(d.fullName)}</option>)}
           </select>
           {view === 'Día' && (
             <button onClick={() => setShowReminders((s) => !s)}
@@ -257,7 +264,12 @@ function DiaView({ appts, patients, onStatus, onEditNote }: {
         <div key={a._id} title={bubble(a, patients[a.patientId])}
           className="flex flex-wrap items-center gap-3 rounded-xl bg-white px-4 py-3 shadow">
           <span className="font-mono font-semibold text-sky-800">{fmtTime(a.startAt)}–{fmtTime(a.endAt)}</span>
-          <span className="flex-1 font-semibold">{patients[a.patientId]?.name ?? '…'}</span>
+          {/* Acceso rápido a la ficha del paciente desde la agenda (pedido de Fabián) */}
+          <Link href={`/pacientes/${a.patientId}`}
+            className="flex-1 font-semibold text-sky-700 hover:underline"
+            title="Ver ficha del paciente">
+            {patients[a.patientId]?.name ?? '…'} →
+          </Link>
           <span className="max-w-40 truncate text-sm text-slate-500" title={a.reason}>{a.reason ?? ''}</span>
           <button onClick={() => onEditNote(a)}
             title={a.notes ? `Nota: ${a.notes}` : 'Agregar nota interna'}
@@ -335,10 +347,11 @@ function SemanaView({ monday, appts, patients, onSlotClick }: {
                   <td key={d} className="group h-8 border border-slate-100 p-0.5 align-top">
                     {cell.length > 0 ? (
                       cell.map((a) => (
-                        <div key={a._id} title={bubble(a, patients[a.patientId])}
-                          className={`cursor-help truncate rounded border px-1 py-0.5 font-semibold ${STATUS_STYLES[a.status]}`}>
+                        <Link key={a._id} href={`/pacientes/${a.patientId}`}
+                          title={bubble(a, patients[a.patientId])}
+                          className={`block truncate rounded border px-1 py-0.5 font-semibold hover:opacity-80 ${STATUS_STYLES[a.status]}`}>
                           {APPT_STATUS_ICONS[a.status]} {patients[a.patientId]?.name.split(',')[0] ?? '…'}
-                        </div>
+                        </Link>
                       ))
                     ) : (
                       <button onClick={() => onSlotClick(d, slot, addMinutes(slot, SLOT_MIN))}
@@ -442,11 +455,11 @@ function RemindersPanel({ date, appts, patients, doctorName, templates, onTempla
   const buildMsg = useCallback((a: Appointment) => {
     const info = patients[a.patientId];
     return fillTemplate(template?.body ?? '', {
-      paciente: info?.firstName ?? 'paciente',
-      clinica: session?.user.tenantName ?? 'la clínica',
+      paciente: titleCase(info?.firstName ?? 'paciente'),
+      clinica: titleCase(session?.user.tenantName ?? 'la clínica'),
       fecha: parseYMD(date).toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' }),
       hora: fmtTime(a.startAt),
-      doctor: doctorName,
+      doctor: withDrPrefix(doctorName),
       motivo: a.reason ? ` Motivo: ${a.reason}.` : '',
     });
   }, [patients, template, session, date, doctorName]);
@@ -551,8 +564,6 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onCreated
   onCreated: () => void;
 }) {
   const session = getSession();
-  const [patientSearch, setPatientSearch] = useState('');
-  const [results, setResults] = useState<Patient[]>([]);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [f, setF] = useState({
     professionalId: defaultDoctorId,
@@ -571,15 +582,6 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onCreated
     api<string[]>('/professionals/specialties').then(setSpecialties).catch(() => null);
   }, []);
 
-  useEffect(() => {
-    if (patient || patientSearch.trim().length < 2) { setResults([]); return; }
-    const t = setTimeout(() => {
-      api<Patient[]>(`/patients?search=${encodeURIComponent(patientSearch)}`)
-        .then((r) => setResults(r.slice(0, 5))).catch(() => setResults([]));
-    }, 300);
-    return () => clearTimeout(t);
-  }, [patientSearch, patient]);
-
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!patient) { setError('Selecciona un paciente'); return; }
@@ -589,7 +591,7 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onCreated
         method: 'POST',
         body: {
           patientId: patient._id, professionalId: f.professionalId,
-          startAt: `${f.date}T${f.start}:00`, endAt: `${f.date}T${f.end}:00`,
+          startAt: localToISO(f.date, f.start), endAt: localToISO(f.date, f.end),
           reason: f.reason || undefined,
           notes: f.notes || undefined,
           requiredSpecialty: f.requiredSpecialty || undefined,
@@ -598,11 +600,11 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onCreated
       // Requerimiento Fabián: enviar mensaje al paciente al agendar (wa.me)
       const tpl = templates.find((t) => t.key === 'cita_confirmacion');
       const msg = fillTemplate(tpl?.body ?? '', {
-        paciente: patient.firstName,
-        clinica: session?.user.tenantName ?? 'la clínica',
+        paciente: titleCase(patient.firstName),
+        clinica: titleCase(session?.user.tenantName ?? 'la clínica'),
         fecha: parseYMD(f.date).toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' }),
         hora: f.start,
-        doctor: doctors.find((d) => d._id === f.professionalId)?.fullName ?? '',
+        doctor: withDrPrefix(doctors.find((d) => d._id === f.professionalId)?.fullName ?? ''),
         motivo: f.reason ? ` Motivo: ${f.reason}.` : '',
       });
       setCreated({ warning: res.specialtyWarning, waUrl: waLink(patient.phone, msg) });
@@ -643,33 +645,13 @@ function NuevaCitaForm({ doctors, defaultDoctorId, prefill, templates, onCreated
       <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
         <div className="relative col-span-2 text-sm">
           Paciente *
-          {patient ? (
-            <p className="mt-1 flex items-center justify-between rounded border border-emerald-300 bg-emerald-50 px-3 py-2">
-              {patient.lastName}, {patient.firstName}
-              <button type="button" className="text-xs text-slate-500 hover:underline"
-                onClick={() => { setPatient(null); setPatientSearch(''); }}>cambiar</button>
-            </p>
-          ) : (
-            <>
-              <input className={input} placeholder="Buscar paciente…" value={patientSearch}
-                onChange={(e) => setPatientSearch(e.target.value)} />
-              {results.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full rounded border border-slate-200 bg-white shadow">
-                  {results.map((r) => (
-                    <button type="button" key={r._id} onClick={() => setPatient(r)}
-                      className="block w-full px-3 py-2 text-left hover:bg-sky-50">
-                      {r.lastName}, {r.firstName} {r.documentNumber ? `· ${r.documentNumber}` : ''}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
+          {/* Busca y, si no existe, permite crearlo sin salir del formulario (pedido de Fabián) */}
+          <PatientPicker patient={patient} onSelect={setPatient} />
         </div>
         <label className="text-sm">Doctor
           <select className={input} value={f.professionalId}
             onChange={(e) => setF({ ...f, professionalId: e.target.value })}>
-            {doctors.map((d) => <option key={d._id} value={d._id}>{d.fullName}</option>)}
+            {doctors.map((d) => <option key={d._id} value={d._id}>{titleCase(d.fullName)}</option>)}
           </select>
         </label>
         <label className="text-sm">Especialidad requerida

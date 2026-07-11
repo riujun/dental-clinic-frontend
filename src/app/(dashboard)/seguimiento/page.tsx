@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { getSession } from '@/lib/auth';
+import { dayRangeISO, daysAgoLocal, todayLocal } from '@/lib/dates';
 import { fetchPatientInfo, PatientInfo } from '@/lib/lookups';
 import {
   Appointment,
@@ -13,17 +14,12 @@ import {
   APPT_STATUS_LABELS,
   fmtDate,
   fmtTime,
+  titleCase,
 } from '@/lib/types';
 import { fillTemplate, MessageTemplate, waLink } from '@/lib/whatsapp';
 
 const input =
   'mt-1 rounded border border-slate-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none';
-
-const daysAgo = (n: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
-};
 
 interface CancelledAppt extends Appointment {
   cancelReason?: string;
@@ -31,8 +27,8 @@ interface CancelledAppt extends Appointment {
 
 export default function SeguimientoPage() {
   const session = getSession();
-  const [from, setFrom] = useState(daysAgo(30));
-  const [to, setTo] = useState(new Date().toISOString().slice(0, 10));
+  const [from, setFrom] = useState(daysAgoLocal(30));
+  const [to, setTo] = useState(todayLocal());
   const [rows, setRows] = useState<CancelledAppt[]>([]);
   const [patients, setPatients] = useState<Record<string, PatientInfo>>({});
   const [template, setTemplate] = useState<MessageTemplate | null>(null);
@@ -45,7 +41,9 @@ export default function SeguimientoPage() {
   }, []);
 
   const load = useCallback(async () => {
-    const q = `from=${from}T00:00:00&to=${to}T23:59:59`;
+    const { from: f } = dayRangeISO(from);
+    const { to: t } = dayRangeISO(to);
+    const q = `from=${f}&to=${t}`;
     const [cancelled, noShow] = await Promise.all([
       api<CancelledAppt[]>(`/appointments?status=cancelled&${q}`),
       api<CancelledAppt[]>(`/appointments?status=no_show&${q}`),
@@ -58,8 +56,8 @@ export default function SeguimientoPage() {
 
   const buildMsg = (a: CancelledAppt) =>
     fillTemplate(template?.body ?? '', {
-      paciente: patients[a.patientId]?.firstName ?? 'paciente',
-      clinica: session?.user.tenantName ?? 'la clínica',
+      paciente: titleCase(patients[a.patientId]?.firstName ?? 'paciente'),
+      clinica: titleCase(session?.user.tenantName ?? 'la clínica'),
     });
 
   return (

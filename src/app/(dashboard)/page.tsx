@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { getSession, Session } from '@/lib/auth';
+import { dayRangeISO } from '@/lib/dates';
 import { fetchPatientInfo, PatientInfo } from '@/lib/lookups';
 import { navForRole } from '@/lib/nav';
 import {
@@ -17,6 +18,7 @@ import {
   fmtMoney,
   fmtTime,
   Patient,
+  titleCase,
 } from '@/lib/types';
 import { fillTemplate, MessageTemplate, waLink } from '@/lib/whatsapp';
 
@@ -48,11 +50,13 @@ export default function HomePage() {
     const inicioMes = `${hoy.slice(0, 8)}01`;
     const filtroDoctor = esDoctor ? `&professionalId=${s.user.professionalId}` : '';
     const filtroProv = esDoctor ? `&providerId=${s.user.professionalId}` : '';
+    const hoyRange = dayRangeISO(hoy);
+    const mesRange = { from: dayRangeISO(inicioMes).from, to: hoyRange.to };
 
     void (async () => {
       const [citas, prod, pacientes, templates] = await Promise.all([
-        api<Appointment[]>(`/appointments?from=${hoy}T00:00:00&to=${hoy}T23:59:59${filtroDoctor}`).catch(() => []),
-        api<{ totalProduction: number }>(`/reports/production?from=${inicioMes}T00:00:00&to=${hoy}T23:59:59${filtroProv}`).catch(() => ({ totalProduction: 0 })),
+        api<Appointment[]>(`/appointments?from=${hoyRange.from}&to=${hoyRange.to}${filtroDoctor}`).catch(() => []),
+        api<{ totalProduction: number }>(`/reports/production?from=${mesRange.from}&to=${mesRange.to}${filtroProv}`).catch(() => ({ totalProduction: 0 })),
         api<Patient[]>('/patients').catch(() => [] as Patient[]),
         api<MessageTemplate[]>('/templates').catch(() => [] as MessageTemplate[]),
       ]);
@@ -126,8 +130,8 @@ export default function HomePage() {
                 ? new Date().getFullYear() - Number(p.birthDate.slice(0, 4))
                 : null;
               const msg = fillTemplate(tplCumple?.body ?? '¡Feliz cumpleaños, {paciente}! 🎂', {
-                paciente: p.firstName,
-                clinica: session.user.tenantName ?? 'la clínica',
+                paciente: titleCase(p.firstName),
+                clinica: titleCase(session.user.tenantName ?? 'la clínica'),
               });
               const link = waLink(p.phone, msg);
               return (
